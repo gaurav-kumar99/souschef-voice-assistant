@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SousChef - Voice Cooking Companion</title>
+<style>
+:root{--bg:#0f1720;--card:#18222e;--text:#e8eef5;--muted:#8fa3b8;--accent:#00caff;--user:#223347}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);display:flex;justify-content:center}
+.app{width:100%;max-width:780px;height:100vh;padding:16px;display:flex;flex-direction:column;gap:12px}
+header{display:flex;justify-content:space-between;align-items:center}
+h1{margin:0;font-size:1.4rem}
+h1 span{color:var(--accent)}
+.sub{color:var(--muted);font-size:.85rem}
+label{font-size:.85rem;color:var(--muted);cursor:pointer}
+#card{background:var(--card);border-left:4px solid var(--accent);border-radius:10px;padding:12px 16px;display:none}
+#card h2{margin:0 0 4px;font-size:1rem;color:var(--accent)}
+#card p{margin:0;font-size:1.15rem;line-height:1.4}
+#timers{display:flex;gap:8px;flex-wrap:wrap}
+.timer{background:var(--card);border-radius:20px;padding:6px 12px;font-size:.9rem;display:flex;gap:8px;align-items:center}
+.timer.done{background:#7a1f1f}
+.timer button{background:none;border:0;color:var(--muted);cursor:pointer;font-size:1rem}
+#log{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:4px}
+.msg{max-width:85%;padding:10px 14px;border-radius:14px;line-height:1.4;white-space:pre-wrap}
+.msg.bot{background:var(--card);align-self:flex-start}
+.msg.user{background:var(--user);align-self:flex-end}
+#chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{background:transparent;border:1px solid var(--muted);color:var(--text);border-radius:16px;padding:5px 10px;font-size:.8rem;cursor:pointer}
+.chip:hover{border-color:var(--accent);color:var(--accent)}
+form{display:flex;gap:8px}
+input[type=text]{flex:1;padding:12px;border-radius:10px;border:1px solid #2b3a4a;background:var(--card);color:var(--text);font-size:1rem}
+button.send,#mic{border:0;border-radius:10px;padding:0 16px;font-size:1rem;cursor:pointer;background:var(--accent);color:#04202a;font-weight:600}
+#mic{width:52px;font-size:1.3rem}
+#mic.on{background:#ff4d4d;animation:pulse 1s infinite}
+@keyframes pulse{50%{opacity:.6}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div>
+      <h1>Sous<span>Chef</span></h1>
+      <div class="sub">A voice cooking companion &middot; simulated Alexa+ experience</div>
+    </div>
+    <label><input type="checkbox" id="mute"> Mute voice</label>
+  </header>
+
+  <div id="card"><h2 id="cardTitle"></h2><p id="cardStep"></p></div>
+  <div id="timers"></div>
+  <div id="log" aria-live="polite"></div>
+
+  <div id="chips"></div>
+  <form id="form">
+    <button type="button" id="mic" title="Speak">&#127908;</button>
+    <input type="text" id="input" placeholder="Say or type: I have eggs and tomato" autocomplete="off">
+    <button class="send" type="submit">Send</button>
+  </form>
+</div>
+
+<script>
+const STAPLES = new Set(['oil', 'salt', 'water']);
+
+const RECIPES = [
+  { name: 'Masala Omelette', alias: ['omelette', 'omelet'],
+    ing: ['egg', 'onion', 'tomato', 'chilli', 'oil', 'salt'],
+    steps: [
+      { t: 'Finely chop one onion, one tomato and one green chilli.' },
+      { t: 'Crack two eggs into a bowl, add the chopped veggies and a pinch of salt, then whisk well.' },
+      { t: 'Heat a teaspoon of oil in a pan on medium heat and pour in the mixture.' },
+      { t: 'Cook until the base sets, then flip and cook the other side.', timer: 120 },
+      { t: 'Slide the omelette onto a plate and serve hot.' }
+    ] },
+  { name: 'Tomato Pasta', alias: ['pasta'],
+    ing: ['pasta', 'tomato', 'garlic', 'oil', 'salt'],
+    steps: [
+      { t: 'Boil water with a pinch of salt and add the pasta.' },
+      { t: 'Let the pasta cook until just tender.', timer: 600 },
+      { t: 'Meanwhile, heat oil in a pan and fry chopped garlic for thirty seconds.' },
+      { t: 'Add chopped tomatoes and a pinch of salt and cook until soft and saucy.', timer: 300 },
+      { t: 'Drain the pasta, toss it in the sauce and serve.' }
+    ] },
+  { name: 'Veg Fried Rice', alias: ['fried rice'],
+    ing: ['rice', 'carrot', 'onion', 'soysauce', 'oil'],
+    steps: [
+      { t: 'Chop the carrot and onion into small pieces.' },
+      { t: 'Heat oil in a pan on high heat and stir fry the onion and carrot.', timer: 180 },
+      { t: 'Add cooked rice and two spoons of soy sauce.' },
+      { t: 'Toss everything together on high heat.', timer: 120 },
+      { t: 'Serve hot.' }
+    ] },
+  { name: 'Aloo Jeera', alias: ['aloo jeera', 'jeera aloo'],
+    ing: ['potato', 'cumin', 'turmeric', 'oil', 'salt'],
+    steps: [
+      { t: 'Boil the potatoes, then peel and cut them into cubes.' },
+      { t: 'Heat oil in a pan and add a teaspoon of cumin seeds until they sizzle.' },
+      { t: 'Add the potatoes, half a teaspoon of turmeric and salt to taste.' },
+      { t: 'Stir fry until the edges turn golden.', timer: 300 },
+      { t: 'Serve with roti or rice.' }
+    ] },
+  { name: 'Dal Tadka', alias: ['dal', 'tadka'],
+    ing: ['dal', 'onion', 'tomato', 'garlic', 'cumin', 'turmeric', 'oil', 'salt'],
+    steps: [
+      { t: 'Wash the dal and boil it with turmeric and salt until soft.', timer: 1200 },
+      { t: 'Mash the dal lightly with a spoon.' },
+      { t: 'In a pan, heat oil and fry cumin, garlic and chopped onion until golden.', timer: 240 },
+      { t: 'Add chopped tomato and cook until soft.', timer: 180 },
+      { t: 'Pour this tadka over the dal, mix and serve.' }
+    ] },
+  { name: 'Poha', alias: ['poha'],
+    ing: ['poha', 'onion', 'peanut', 'turmeric', 'lemon', 'oil', 'salt'],
+    steps: [
+      { t: 'Rinse the poha in a sieve and let it rest.', timer: 300 },
+      { t: 'Heat oil, fry a handful of peanuts, then add chopped onion.', timer: 180 },
+      { t: 'Add turmeric and salt, then the soft poha, and mix gently.' },
+      { t: 'Cover and cook on low heat.', timer: 120 },
+      { t: 'Squeeze lemon over it and serve.' }
+    ] },
+  { name: 'Grilled Cheese Sandwich', alias: ['grilled cheese', 'sandwich'],
+    ing: ['bread', 'cheese', 'butter'],
+    steps: [
+      { t: 'Butter one side of each bread slice.' },
+      { t: 'Place cheese between the slices, butter side out.' },
+      { t: 'Toast on a pan over medium heat until golden.', timer: 120 },
+      { t: 'Flip and toast the other side.', timer: 120 },
+      { t: 'Cut diagonally and serve.' }
+    ] },
+  { name: 'Banana Pancakes', alias: ['pancake', 'pancakes'],
+    ing: ['banana', 'egg', 'flour', 'milk'],
+    steps: [
+      { t: 'Mash one ripe banana in a bowl.' },
+      { t: 'Add one egg, half a cup of flour and a splash of milk, then whisk into a batter.' },
+      { t: 'Pour small circles of batter onto a lightly greased pan.' },
+      { t: 'Cook until bubbles appear, then flip.', timer: 120 },
+      { t: 'Stack and serve warm.' }
+    ] }
+];
+
+const SYN = { eggs: 'egg', onions: 'onion', tomatoes: 'tomato', potatoes: 'potato', carrots: 'carrot',
+  bananas: 'banana', chillies: 'chilli', chili: 'chilli', chilies: 'chilli', peanuts: 'peanut',
+  lentil: 'dal', lentils: 'dal', lemons: 'lemon', noodles: 'pasta', spaghetti: 'pasta', aloo: 'potato' };
+const VOCAB = new Set(RECIPES.flatMap(r => r.ing));
+
+const state = { recipe: null, step: 0 };
+
+/* ---------- helpers ---------- */
+const $ = id => document.getElementById(id);
+const log = $('log');
+
+function fmt(sec) {
+  if (sec >= 3600) return Math.round(sec / 3600) + ' hour';
+  if (sec >= 60) { const m = Math.round(sec / 60); return m + ' minute' + (m > 1 ? 's' : ''); }
+  return sec + ' seconds';
+}
+function addMsg(who, text) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + who;
+  d.textContent = text;
+  log.appendChild(d);
+  log.scrollTop = log.scrollHeight;
+}
+function speak(text) {
+  if ($('mute').checked || !('speechSynthesis' in window)) return;
+  speechSynthesis.cancel();
+  speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+}
+function say(text) { addMsg('bot', text); speak(text); }
+
+function beep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [0, 0.35, 0.7].forEach(t => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.frequency.value = 880; g.gain.value = 0.2;
+      o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + 0.25);
+    });
+  } catch (e) { /* audio not available */ }
+}
+
+/* ---------- timers ---------- */
+const timers = [];
+let timerId = 0;
+function addTimer(sec, label) {
+  timers.push({ id: ++timerId, label, end: Date.now() + sec * 1000, done: false });
+  renderTimers();
+}
+function renderTimers() {
+  const box = $('timers');
+  box.innerHTML = '';
+  timers.forEach(t => {
+    const left = Math.max(0, Math.ceil((t.end - Date.now()) / 1000));
+    const el = document.createElement('div');
+    el.className = 'timer' + (t.done ? ' done' : '');
+    const m = String(Math.floor(left / 60)).padStart(2, '0'), s = String(left % 60).padStart(2, '0');
+    el.textContent = '\u23F1 ' + t.label + ': ' + (t.done ? 'Done!' : m + ':' + s);
+    const x = document.createElement('button');
+    x.textContent = '\u2715';
+    x.onclick = () => { timers.splice(timers.indexOf(t), 1); renderTimers(); };
+    el.appendChild(x);
+    box.appendChild(el);
+  });
+}
+setInterval(() => {
+  timers.forEach(t => {
+    if (!t.done && Date.now() >= t.end) { t.done = true; beep(); say('Your ' + t.label + ' timer is done.'); }
+  });
+  renderTimers();
+}, 500);
+
+/* ---------- recipe flow ---------- */
+function renderCard() {
+  const card = $('card');
+  if (!state.recipe) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  $('cardTitle').textContent = state.recipe.name + ' \u2022 step ' + (state.step + 1) + ' of ' + state.recipe.steps.length;
+  $('cardStep').textContent = state.recipe.steps[state.step].t;
+}
+function stepText() {
+  const r = state.recipe, s = r.steps[state.step];
+  let t = 'Step ' + (state.step + 1) + ' of ' + r.steps.length + '. ' + s.t;
+  if (s.timer) t += ' This needs a ' + fmt(s.timer) + ' timer. Say start timer when you are ready.';
+  return t;
+}
+function startRecipe(r) {
+  state.recipe = r; state.step = 0; renderCard();
+  const ings = r.ing.map(i => i === 'soysauce' ? 'soy sauce' : i).join(', ');
+  return 'Great, let us make ' + r.name + '. You will need: ' + ings + '. Say next whenever you are ready for the steps.';
+}
+
+/* ---------- ingredient matching ---------- */
+function findIngredients(text) {
+  const out = new Set();
+  text.replace(/soy sauce/g, 'soysauce').split(/\s+/).forEach(w => {
+    w = SYN[w] || w;
+    if (VOCAB.has(w)) out.add(w);
+    else if (w.endsWith('s') && VOCAB.has(w.slice(0, -1))) out.add(w.slice(0, -1));
+  });
+  return [...out].filter(i => !STAPLES.has(i));
+}
+function suggest(have) {
+  const scored = RECIPES.map(r => {
+    const need = r.ing.filter(i => !STAPLES.has(i));
+    const got = need.filter(i => have.includes(i));
+    return { r, got: got.length, score: got.length / need.length, miss: need.filter(i => !have.includes(i)) };
+  }).filter(x => x.got > 0).sort((a, b) => b.score - a.score || a.miss.length - b.miss.length).slice(0, 3);
+  if (!scored.length) return 'I could not find a recipe for those. Try eggs, tomato, onion, potato, rice or bread.';
+  const lines = scored.map(x => x.r.name + (x.miss.length ? ' (you would also need ' + x.miss.join(', ') + ')' : ' (you have everything!)'));
+  return 'With ' + have.join(', ') + ' you could make: ' + lines.join('; ') + '. Say start followed by a recipe name to begin cooking.';
+}
+
+/* ---------- intent routing ---------- */
+const HELP = 'I am SousChef. Tell me what is in your kitchen, like "I have eggs and tomato", or say "start pasta". While cooking say next, back, repeat, start timer, or set a timer for 5 minutes.';
+
+function route(text) {
+  const tm = text.match(/(\d+)\s*(seconds?|secs?|minutes?|mins?|hours?)/);
+  if (tm && /timer|remind|alarm/.test(text)) {
+    const n = parseInt(tm[1], 10), u = tm[2][0];
+    const sec = u === 'h' ? n * 3600 : u === 'm' ? n * 60 : n;
+    addTimer(sec, fmt(sec));
+    return 'Okay, timer set for ' + fmt(sec) + '.';
+  }
+  if (/(start|begin|set)\b.*\btimer/.test(text)) {
+    if (state.recipe && state.recipe.steps[state.step].timer) {
+      const sec = state.recipe.steps[state.step].timer;
+      addTimer(sec, fmt(sec));
+      return 'Timer started for ' + fmt(sec) + '.';
+    }
+    return 'How long should I set it for? Say something like set a timer for 5 minutes.';
+  }
+  if (/\b(stop|cancel|quit|exit)\b/.test(text)) {
+    state.recipe = null; renderCard();
+    return 'Okay, I have stopped the recipe. Tell me what you would like to cook next.';
+  }
+  if (/\b(next|continue|go on|done)\b/.test(text)) {
+    if (!state.recipe) return 'We have not started a recipe yet. Tell me what you have, or say start pasta.';
+    if (state.step >= state.recipe.steps.length - 1) {
+      const name = state.recipe.name; state.recipe = null; renderCard();
+      return 'That was the last step. Enjoy your ' + name + '!';
+    }
+    state.step++; renderCard(); return stepText();
+  }
+  if (/\b(back|previous|before)\b/.test(text)) {
+    if (!state.recipe) return 'Nothing to go back to yet.';
+    if (state.step > 0) state.step--;
+    renderCard(); return stepText();
+  }
+  if (/\b(repeat|again|say that)\b/.test(text)) {
+    return state.recipe ? stepText() : 'There is nothing to repeat yet.';
+  }
+  if (state.recipe && /\b(ingredients|need)\b/.test(text)) {
+    return 'For ' + state.recipe.name + ' you need: ' + state.recipe.ing.map(i => i === 'soysauce' ? 'soy sauce' : i).join(', ') + '.';
+  }
+
+  const askingIngredients = /\b(have|got|with|using)\b|what can i/.test(text);
+  if (!askingIngredients) {
+    const r = RECIPES.find(r => text.includes(r.name.toLowerCase()) || r.alias.some(a => text.includes(a)));
+    if (r && /\b(start|begin|cook|make|lets|let's)\b|^[a-z ]+$/.test(text)) return startRecipe(r);
+  }
+  const have = findIngredients(text);
+  if (have.length) return suggest(have);
+
+  if (/\b(help|hello|hi|hey|alexa)\b/.test(text)) return HELP;
+  return 'Sorry, I did not catch that. ' + HELP;
+}
+
+function handle(raw) {
+  const text = raw.toLowerCase().replace(/[.,!?]/g, '').trim();
+  if (!text) return;
+  addMsg('user', raw);
+  say(route(text));
+}
+
+/* ---------- UI wiring ---------- */
+$('form').addEventListener('submit', e => {
+  e.preventDefault();
+  const v = $('input').value;
+  $('input').value = '';
+  handle(v);
+});
+
+['I have eggs and tomato', 'Start Tomato Pasta', 'Next', 'Start timer', 'Repeat', 'Set a timer for 2 minutes', 'Help']
+  .forEach(label => {
+    const b = document.createElement('button');
+    b.className = 'chip'; b.type = 'button'; b.textContent = label;
+    b.onclick = () => handle(label);
+    $('chips').appendChild(b);
+  });
+
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (SR) {
+  const rec = new SR();
+  rec.lang = 'en-US'; rec.interimResults = false;
+  rec.onresult = e => handle(e.results[0][0].transcript);
+  rec.onend = () => $('mic').classList.remove('on');
+  rec.onerror = () => $('mic').classList.remove('on');
+  $('mic').onclick = () => {
+    speechSynthesis.cancel();
+    try { rec.start(); $('mic').classList.add('on'); } catch (e) { /* already listening */ }
+  };
+} else {
+  $('mic').style.display = 'none';
+}
+
+say('Hi, I am SousChef, your voice cooking companion. Tell me what is in your kitchen, for example "I have eggs and tomato".');
+</script>
+</body>
+</html>
